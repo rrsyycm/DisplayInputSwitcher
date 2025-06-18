@@ -1,0 +1,6 @@
+/build/
+/dist/
+/main.build/
+/main.dist/
+/nuitka-crash-report.xml
+/ssh.sh
