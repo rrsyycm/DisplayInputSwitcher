@@ -4,11 +4,10 @@
 # nuitka-project: --output-file=DisplaySwitcher.exe
 # nuitka-project: --assume-yes-for-downloads
 # nuitka-project: --enable-plugins=pyside6
-# nuitka-project: --windows-product-version=1.0.0
-# nuitka-project: --windows-file-version=1.0.0
+# nuitka-project: --windows-product-version=1.0.1
+# nuitka-project: --windows-file-version=1.0.1
 # nuitka-project: --windows-product-name=DisplaySwitcher
 # nuitka-project: --windows-icon-from-ico=icon.ico
-# nuitka-project: --windows-console-mode=disable
 
 
 import argparse
@@ -16,15 +15,18 @@ import json
 import os
 import sys
 import threading
-import winreg as reg
+
 import keyboard
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QIcon, QAction, QKeySequence
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QIcon, QAction, QKeySequence, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QCheckBox,
-    QTreeWidget, QTreeWidgetItem, QSystemTrayIcon, QMenu, QLabel
+    QTreeWidget, QTreeWidgetItem, QSystemTrayIcon, QMenu, QLabel, QMessageBox
 )
 from monitorcontrol import get_monitors, InputSource
+
+from lib.AutoUpdater import AutoUpdater
+from lib.AutoStart import AutoStart
 
 # ========== 常量定义 ==========
 CONFIG_PATH = "config.json"
@@ -34,53 +36,6 @@ ICON_PATH = "icon.ico"
 
 # 设置工作目录为程序所在目录
 os.chdir(os.path.dirname(os.path.abspath(sys.argv[0])))
-
-
-# ========== 开机自启类 ==========
-class Autostart:
-    """处理程序的开机自启设置"""
-
-    def __init__(self, name: str, path: str = None, hidden: bool = False):
-        self.name = name
-        self.path = os.path.abspath(path or sys.argv[0])
-        self.hidden = hidden
-        self.key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-
-    def exists(self) -> bool:
-        try:
-            with reg.OpenKey(reg.HKEY_CURRENT_USER, self.key_path) as key:
-                reg.QueryValueEx(key, self.name)
-                return True
-        except Exception:
-            return False
-
-    def enable(self) -> bool:
-        try:
-            exec_path = f'"{self.path}"' if ' ' in self.path else self.path
-            if self.hidden:
-                exec_path += " --hidden"
-            with reg.OpenKey(reg.HKEY_CURRENT_USER, self.key_path, 0, reg.KEY_SET_VALUE) as key:
-                reg.SetValueEx(key, self.name, 0, reg.REG_SZ, exec_path)
-            return True
-        except Exception as e:
-            print(f"Error enabling autostart: {e}")
-            return False
-
-    def disable(self) -> bool:
-        try:
-            with reg.OpenKey(reg.HKEY_CURRENT_USER, self.key_path, 0, reg.KEY_SET_VALUE) as key:
-                reg.DeleteValue(key, self.name)
-            return True
-        except FileNotFoundError:
-            return True
-        except Exception as e:
-            print(f"Error disabling autostart: {e}")
-            return False
-
-    def set_autostart(self, switch: bool, hidden: bool = None) -> bool:
-        if hidden is not None:
-            self.hidden = hidden
-        return self.enable() if switch else self.disable()
 
 
 # ========== 自定义树控件 ==========
@@ -122,7 +77,12 @@ class MonitorSwitcher(QWidget):
         self.setWindowTitle(APP_TITLE)
         self.resize(800, 500)
 
-        self.app = Autostart(name=APP_NAME)
+        self.app_start = AutoStart(name=APP_NAME)
+        self.app_update = AutoUpdater(
+            repo_owner='rrsyycm',
+            repo_name='DisplayInputSwitcher',
+            update_callback=self._update_available_callback
+        )
         self.monitor_data = self.get_monitor_data()
         self.config_map = {}
 
@@ -151,10 +111,18 @@ class MonitorSwitcher(QWidget):
         layout.addLayout(btns)
         layout.addWidget(self.tree)
 
+        # 创建一个水平布局容器
+        h_layout = QHBoxLayout()
         self.autostart_box = QCheckBox("开机自启")
-        self.autostart_box.setChecked(self.app.exists())
-        self.autostart_box.stateChanged.connect(lambda s: self.app.set_autostart(s == 2, hidden=True))
-        layout.addWidget(self.autostart_box)
+        self.autostart_box.setChecked(self.app_start.exists())
+        self.autostart_box.stateChanged.connect(lambda s: self.app_start.set_autostart(s == 2, hidden=True))
+        h_layout.addWidget(self.autostart_box)
+
+        self.autoupdate_box = QCheckBox("检查更新")
+        self.autoupdate_box.setChecked(self.app_update.check_at_startup)
+        self.autoupdate_box.stateChanged.connect(lambda s: self.app_update.enable_auto_check(s == 2))
+        h_layout.addWidget(self.autoupdate_box)
+        layout.addLayout(h_layout)
 
     # ========== 托盘图标 ==========
     def init_tray(self):
@@ -329,6 +297,40 @@ class MonitorSwitcher(QWidget):
             except Exception:
                 pass
         return monitor_data
+
+    # ========== 更新回调 ==========
+    def _update_available_callback(self, current: str, latest: str, url: str):
+        """发现更新时的回调函数"""
+        # 创建消息框
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("发现新版本")
+        msg_box.setIcon(QMessageBox.Information)
+
+        # 设置消息内容
+        message = f"""
+        <p>当前版本: <b>{current}</b></p>
+        <p>最新版本: <b>{latest}</b></p>
+        <p>请点击下方链接下载新版本:</p>
+        <p><a href='{url}'>{url}</a></p>
+        """
+
+        # 创建可点击的链接
+        msg_box.setTextFormat(Qt.RichText)
+        msg_box.setText(message)
+
+        # 添加按钮
+        msg_box.addButton("立即下载", QMessageBox.AcceptRole)
+        msg_box.addButton("稍后提醒", QMessageBox.RejectRole)
+        skip_button = msg_box.addButton("跳过此版本", QMessageBox.ActionRole)
+
+        # 显示消息框并获取用户选择
+        result = msg_box.exec_()
+
+        if result == QMessageBox.AcceptRole:  # 立即下载
+            QDesktopServices.openUrl(QUrl(url))
+        elif msg_box.clickedButton() == skip_button:  # 跳过此版本
+            self.app_update.skip_update(latest)
+            QMessageBox.information(self, "已跳过", f"已跳过版本 {latest} 的更新提醒")
 
 
 # ========== 程序入口 ==========
