@@ -19,22 +19,41 @@ jobs:
         with:
           python-version: '3.10'
 
+      # ✅ pip 缓存加速
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
 
-      - name: Compile with Nuitka (non-onefile)
-        uses: Nuitka/Nuitka-Action@main
-        with:
-          nuitka-version: main
-          script-name: main.py
-          mode: standalone
-          include-data-files: icon.ico=icon.ico
-          windows-console-mode: disable
-          windows-icon-from-ico: icon.ico
-          enable-plugins: pyside6
-          output-file: DisplaySwitcher.exe
+      # ✅ 统一版本提取变量
+      - name: Extract version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION="0.0.0.0"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "APP_VERSION=$VERSION" >> $GITHUB_ENV
 
+      # ✅ Nuitka 编译
+      - name: Compile with Nuitka (non-onefile)
+        run: |
+          python -m nuitka main.py `
+            --windows-file-version=${{ steps.version.outputs.version }} `
+            --windows-product-version=${{ steps.version.outputs.version }}
+
+
+      # ✅ 使用变量统一输出目录
       - name: Create top-level directory
         run: |
           $outputDir = "DisplaySwitcher"
@@ -42,10 +61,12 @@ jobs:
           Copy-Item -Path build/main.dist/* -Destination $outputDir -Recurse
         shell: pwsh
 
+      # ✅ 使用变量创建 zip 包
       - name: Create zip for release
         run: |
-          $version = "$env:GITHUB_REF".Replace("refs/tags/", "")
+          $version = "${{ steps.version.outputs.version }}"
           Compress-Archive -Path "DisplaySwitcher" -DestinationPath "DisplaySwitcher-$version.zip"
+        shell: pwsh
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -54,9 +75,10 @@ jobs:
           path: DisplaySwitcher-*.zip
           include-hidden-files: true
 
+      # ✅ 条件触发发布
       - name: Upload zip to GitHub Release
-        uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
         with:
           files: DisplaySwitcher-*.zip
         env:

@@ -1,3 +1,4 @@
 keyboard==0.13.5
 monitorcontrol==4.1.1
 PySide6==6.9.1
+nuitka==2.7.7

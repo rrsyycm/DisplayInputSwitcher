@@ -1,10 +1,22 @@
+# nuitka-project: --mode=standalone
+# nuitka-project: --include-data-files=icon.ico=icon.ico
+# nuitka-project: --output-dir=build
+# nuitka-project: --output-file=DisplaySwitcher.exe
+# nuitka-project: --assume-yes-for-downloads
+# nuitka-project: --enable-plugins=pyside6
+# nuitka-project: --windows-product-version=1.0.0
+# nuitka-project: --windows-file-version=1.0.0
+# nuitka-project: --windows-product-name=DisplaySwitcher
+# nuitka-project: --windows-icon-from-ico=icon.ico
+# nuitka-project: --windows-console-mode=disable
+
+
 import argparse
 import json
 import os
 import sys
 import threading
 import winreg as reg
-
 import keyboard
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon, QAction, QKeySequence
